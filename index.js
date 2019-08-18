@@ -1,17 +1,16 @@
 var tic = require('tic')();
 var createAtlas = require('atlaspack');
-var isTransparent = require('opaque').transparent;
-
+var ns = require("noisejs");
 function Texture(opts) {
   if (!(this instanceof Texture)) return new Texture(opts || {});
   var self = this;
   this.game = opts.game; delete opts.game;
   this.THREE = this.game.THREE;
   this.materials = [];
-  this.transparents = [];
   this.texturePath = opts.texturePath || '/textures/';
   this.loading = 0;
-  this.ao = require('voxel-fakeao')(this.game);
+  this.noise = new ns.Noise(Math.random());
+  this.heightNoise = new ns.Noise(Math.random());
 
   var useFlatColors = opts.materialFlatColor === true;
   delete opts.materialFlatColor;
@@ -19,16 +18,7 @@ function Texture(opts) {
   this.options = defaults(opts || {}, {
     crossOrigin: 'Anonymous',
     materialParams: defaults(opts.materialParams || {}, {
-      ambient: 0xbbbbbb,
-      transparent: false,
-      side: this.THREE.DoubleSide,
-    }),
-    materialTransparentParams: defaults(opts.materialTransparentParams || {}, {
-      ambient: 0xbbbbbb,
-      transparent: true,
-      side: this.THREE.DoubleSide,
-      //depthWrite: false,
-      //depthTest: false
+      ambient: 0xbbbbbb
     }),
     materialType: this.THREE.MeshLambertMaterial,
     applyTextureParams: function(map) {
@@ -41,9 +31,6 @@ function Texture(opts) {
   this.canvas = (typeof document !== 'undefined') ? document.createElement('canvas') : {};
   this.canvas.width = opts.atlasWidth || 512;
   this.canvas.height = opts.atlasHeight || 512;
-  var ctx = this.canvas.getContext('2d');
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
   // create core atlas and texture
   this.atlas = createAtlas(this.canvas);
@@ -59,14 +46,10 @@ function Texture(opts) {
       vertexColors: this.THREE.VertexColors
     });
   } else {
-    var opaque = new this.options.materialType(this.options.materialParams);
-    opaque.map = this.texture;
-    var transparent = new this.options.materialType(this.options.materialTransparentParams);
-    transparent.map = this.texture;
-    this.material = new this.THREE.MeshFaceMaterial([
-      opaque,
-      transparent
-    ]);
+    // load a first material for easy application to meshes
+    this.material = new this.options.materialType(this.options.materialParams);
+    this.material.map = this.texture;
+    this.material.transparent = true;
   }
 
   // a place for meshes to wait while textures are loading
@@ -85,13 +68,7 @@ Texture.prototype.load = function(names, done) {
 
   // load onto the texture atlas
   var load = Object.create(null);
-  materialSlice.forEach(function(mats) {
-    mats.forEach(function(mat) {
-      if (mat.slice(0, 1) === '#') return;
-      // todo: check if texture already exists
-      load[mat] = true;
-    });
-  });
+
   if (Object.keys(load).length > 0) {
     each(Object.keys(load), self.pack.bind(self), function() {
       self._afterLoading();
@@ -118,9 +95,6 @@ Texture.prototype.pack = function(name, done) {
     img.crossOrigin = self.options.crossOrigin;
     img.src = self.texturePath + ext(name);
     img.onload = function() {
-      if (isTransparent(img)) {
-        self.transparents.push(name);
-      }
       pack(img);
     };
     img.onerror = function() {
@@ -209,7 +183,7 @@ Texture.prototype._powerof2 = function(done) {
   done();
 };
 
-Texture.prototype.paint = function(mesh, materials) {
+Texture.prototype.paint = function(mesh,pos, materials) {
   var self = this;
 
   // if were loading put into queue
@@ -221,55 +195,103 @@ Texture.prototype.paint = function(mesh, materials) {
   var isVoxelMesh = (materials) ? false : true;
   if (!isVoxelMesh) materials = self._expandName(materials);
 
-  mesh.geometry.faces.forEach(function(face, i) {
-    if (mesh.geometry.faceVertexUvs[0].length < 1) return;
+  mesh.geometry.vertices.forEach((vertice,i)=>{
+    if (i%4===0)
+    {
+      let faceI = Math.floor(i/4);
 
-    if (isVoxelMesh) {
-      var index = Math.floor(face.color.b*255 + face.color.g*255*255 + face.color.r*255*255*255);
-      materials = self.materials[index - 1];
-      if (!materials) materials = self.materials[0];
-    }
+      let face = mesh.geometry.faces[faceI];
 
-    // BACK, FRONT, TOP, BOTTOM, LEFT, RIGHT
-    var name = materials[0] || '';
-    if      (face.normal.z === 1)  name = materials[1] || '';
-    else if (face.normal.y === 1)  name = materials[2] || '';
-    else if (face.normal.y === -1) name = materials[3] || '';
-    else if (face.normal.x === -1) name = materials[4] || '';
-    else if (face.normal.x === 1)  name = materials[5] || '';
+      if (mesh.geometry.faceVertexUvs[0].length < 1) return;
 
-    // if just a simple color
-    if (name.slice(0, 1) === '#') {
-      self.ao(face, name);
-      return;
-    }
-
-    var atlasuv = self._atlasuv[name];
-    if (!atlasuv) return;
-
-    // If a transparent texture use transparent material
-    face.materialIndex = (self.transparents.indexOf(name) !== -1) ? 1 : 0;
-
-    // 0 -- 1
-    // |    |
-    // 3 -- 2
-    // faces on these meshes are flipped vertically, so we map in reverse
-    // TODO: tops need rotate
-    if (isVoxelMesh) {
-      if (face.normal.z === -1 || face.normal.x === 1) {
-        atlasuv = uvrot(atlasuv, 90);
+      if (isVoxelMesh) {
+        var index = Math.floor(face.color.b*255 + face.color.g*255*255 + face.color.r*255*255*255);
+        materials = self.materials[index - 1];
+        if (!materials) materials = self.materials[0];
       }
-      atlasuv = uvinvert(atlasuv);
-    } else {
-      atlasuv = uvrot(atlasuv, -90);
+
+      // BACK, FRONT, TOP, BOTTOM, LEFT, RIGHT
+      var name = materials[0] || '';
+      if      (face.normal.z === 1)  name = materials[1] || '';
+      else if (face.normal.y === 1)  name = materials[2] || '';
+      else if (face.normal.y === -1) name = materials[3] || '';
+      else if (face.normal.x === -1) name = materials[4] || '';
+      else if (face.normal.x === 1)  name = materials[5] || '';
+
+      // if just a simple color
+      if (name.primaryColor.slice(0, 1) === '#') {
+        let value = self.noise.perlin3( (vertice.x/15), vertice.y/15, vertice.z/15);
+        let heightValue = self.heightNoise.perlin3( (vertice.x/30), vertice.y/30, vertice.z/30);
+        value = Math.min(Math.max(value, -1), 1);
+        heightValue = Math.min(Math.max(heightValue, 0), 0.07);
+        let c = lerpColor(name.primaryColor, name.secondaryColor,value);
+
+        c = lerpColor(c, "#ffffff", Math.pow(vertice.y/25,2) + heightValue);
+        self.setColor(mesh.geometry.faces[faceI], c);
+
+        //self.setColor(mesh.geometry.faces[i], name);
+        return;
+      }
+
+      var atlasuv = self._atlasuv[name];
+      if (!atlasuv) return;
+
+      // 0 -- 1
+      // |    |
+      // 3 -- 2
+      // faces on these meshes are flipped vertically, so we map in reverse
+      // TODO: tops need rotate
+      if (isVoxelMesh) {
+        if (face.normal.z === -1 || face.normal.x === 1) {
+          atlasuv = uvrot(atlasuv, 90);
+        }
+        atlasuv = uvinvert(atlasuv);
+      } else {
+        atlasuv = uvrot(atlasuv, -90);
+      }
+      for (var j = 0; j < 4; j++) {
+        mesh.geometry.faceVertexUvs[0][faceI][j].set(atlasuv[j][0], 1 - atlasuv[j][1]);
+      }
     }
-    for (var j = 0; j < mesh.geometry.faceVertexUvs[0][i].length; j++) {
-      mesh.geometry.faceVertexUvs[0][i][j].set(atlasuv[j][0], 1 - atlasuv[j][1]);
-    }
+
+
   });
+
+  // mesh.geometry.faces.forEach(function(face, i) {
+  //
+  // });
 
   mesh.geometry.uvsNeedUpdate = true;
 };
+
+/**
+ * A linear interpolator for hex colors.
+ *
+ * Based on:
+ * https://gist.github.com/rosszurowski/67f04465c424a9bc0dae
+ *
+ * @param {Number} a  (hex color start val)
+ * @param {Number} b  (hex color end val)
+ * @param {Number} amount  (the amount to fade from a to b)
+ *
+ * @example
+ * // returns 0x7f7f7f
+ * lerpColor(0x000000, 0xffffff, 0.5)
+ *
+ * @returns {Number}
+ */
+function lerpColor(a, b, amount) {
+
+  var ah = parseInt(a.replace(/#/g, ''), 16),
+    ar = ah >> 16, ag = ah >> 8 & 0xff, ab = ah & 0xff,
+    bh = parseInt(b.replace(/#/g, ''), 16),
+    br = bh >> 16, bg = bh >> 8 & 0xff, bb = bh & 0xff,
+    rr = ar + amount * (br - ar),
+    rg = ag + amount * (bg - ag),
+    rb = ab + amount * (bb - ab);
+
+  return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb | 0).toString(16).slice(1);
+}
 
 Texture.prototype.sprite = function(name, w, h, cb) {
   var self = this;
@@ -334,6 +356,28 @@ Texture.prototype.tick = function(dt) {
   tic.tick(dt);
 };
 
+Texture.prototype.setColor = function(face, color) {
+  var rgb = hex2rgb(color);
+  face.color.setRGB(rgb[0], rgb[1], rgb[2]);
+  var ld = this._lightDark(color);
+  face.vertexColors = [ld[0], ld[0], ld[0], ld[0]];
+  // TODO: AO should be figured better than this
+  // if (face.normal.y === 1)       face.vertexColors = [ld[0], ld[0], ld[0], ld[0]];
+  // else if (face.normal.y === -1) face.vertexColors = [ld[1], ld[1], ld[1], ld[1]];
+  // else if (face.normal.x === 1)  face.vertexColors = [ld[1], ld[0], ld[0], ld[1]];
+  // else if (face.normal.x === -1) face.vertexColors = [ld[1], ld[1], ld[0], ld[0]];
+  // else if (face.normal.z === 1)  face.vertexColors = [ld[1], ld[1], ld[0], ld[0]];
+  // else                           face.vertexColors = [ld[1], ld[0], ld[0], ld[1]];
+};
+
+Texture.prototype._lightDark = memoize(function(color) {
+  var light = new this.THREE.Color(color);
+  var hsl = light.getHSL();
+  var dark = light.clone();
+  dark.setHSL(hsl.h, hsl.s, hsl.l - 0.1);
+  return [light, dark];
+});
+
 function uvrot(coords, deg) {
   if (deg === 0) return coords;
   var c = [];
@@ -369,4 +413,20 @@ function each(arr, it, done) {
       if (count >= arr.length) done();
     });
   });
+}
+
+function hex2rgb(hex) {
+  if (hex[0] === '#') hex = hex.substr(1);
+  return [parseInt(hex.substr(0,2), 16)/255, parseInt(hex.substr(2,2), 16)/255, parseInt(hex.substr(4,2), 16)/255];
+}
+
+function memoize(func) {
+  function memoized() {
+    var cache = memoized.cache, key = arguments[0];
+    return hasOwnProperty.call(cache, key)
+      ? cache[key]
+      : (cache[key] = func.apply(this, arguments));
+  }
+  memoized.cache = {};
+  return memoized;
 }
