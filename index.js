@@ -186,9 +186,10 @@ Texture.prototype._powerof2 = function(done) {
   done();
 };
 
-Texture.prototype.paint = function(mesh,pos, materials) {
-  var self = this;
+Texture.prototype.paint = function(mesh,materials) {
 
+  var self = this;
+  var pos = mesh.surfaceMesh.position;
   // if were loading put into queue
   if (self.loading > 0) {
     self._meshQueue.push({self: self, args: arguments});
@@ -229,12 +230,16 @@ Texture.prototype.paint = function(mesh,pos, materials) {
 
       // if just a simple color
       if (name.primaryColor.slice(0, 1) === '#') {
-        let value = self.noise.perlin3( (baseVertice.x/15), baseVertice.y/15, baseVertice.z/15);
-        let heightValue = Math.abs(self.heightNoise.perlin3( (baseVertice.x/30), baseVertice.y/30, baseVertice.z/30));
+        let globalPos = {
+          x:pos.x *1 + baseVertice.x,
+          y:pos.y *1 + baseVertice.y,
+          z:pos.z *1 + baseVertice.z};
+        let value = self.noise.perlin3( (globalPos.x/30), globalPos.y/30, globalPos.z/30);
+        let heightValue = Math.abs(self.heightNoise.perlin3( (globalPos.x/30), globalPos.y/30, globalPos.z/30));
         value = Math.abs(Math.min(Math.max(value, -1), 1));
-        heightValue = Math.min(Math.max(heightValue, 0), 0.07);
+        heightValue = Math.min(Math.max(heightValue, 0), 0);
         let c = lerpColor(name.primaryColor, name.secondaryColor,value);
-        c = lerpColor(c, "#ffffff", Math.pow(baseVertice.y/19,2) + heightValue);
+        c = lerpColor(c, "#ffffff", Math.pow(globalPos.y/20,2) + heightValue);
         self.setColor(mesh.geometry.faces[faceI], c);
 
         //self.setColor(mesh.geometry.faces[i], name);
