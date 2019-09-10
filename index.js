@@ -1,6 +1,8 @@
 var tic = require('tic')();
 var createAtlas = require('atlaspack');
 var ns = require("noisejs");
+const THREE = require('three');
+
 function Texture(opts) {
   if (!(this instanceof Texture)) return new Texture(opts || {});
   var self = this;
@@ -41,10 +43,11 @@ function Texture(opts) {
   this.options.applyTextureParams(this.texture);
 
   if (useFlatColors) {
-    // If were using simple colors
-    this.material = new this.THREE.MeshBasicMaterial({
+    let mat = new this.THREE.MeshPhongMaterial({
       vertexColors: this.THREE.VertexColors
     });
+    // If were using simple colors
+    this.material = mat;
   } else {
     // load a first material for easy application to meshes
     this.material = new this.options.materialType(this.options.materialParams);
@@ -195,38 +198,43 @@ Texture.prototype.paint = function(mesh,pos, materials) {
   var isVoxelMesh = (materials) ? false : true;
   if (!isVoxelMesh) materials = self._expandName(materials);
 
+  let flipaBoo = false;
+  let baseVertice;
   mesh.geometry.vertices.forEach((vertice,i)=>{
-    if (i%4===0)
+    if (i%2===0)
     {
-      let faceI = Math.floor(i/4);
+      let faceI = i/2;
 
+      if (!flipaBoo)
+        baseVertice = vertice.clone();
+
+      flipaBoo = !flipaBoo;
       let face = mesh.geometry.faces[faceI];
 
       if (mesh.geometry.faceVertexUvs[0].length < 1) return;
 
       if (isVoxelMesh) {
         var index = Math.floor(face.color.b*255 + face.color.g*255*255 + face.color.r*255*255*255);
-        materials = self.materials[index - 1];
-        if (!materials) materials = self.materials[0];
+        materials = self.materials[index-1];
+         if (!materials) materials = self.materials[0];
       }
 
       // BACK, FRONT, TOP, BOTTOM, LEFT, RIGHT
       var name = materials[0] || '';
-      if      (face.normal.z === 1)  name = materials[1] || '';
-      else if (face.normal.y === 1)  name = materials[2] || '';
-      else if (face.normal.y === -1) name = materials[3] || '';
-      else if (face.normal.x === -1) name = materials[4] || '';
-      else if (face.normal.x === 1)  name = materials[5] || '';
+      // if      (face.normal.z === 1)  name = materials[1] || '';
+      // else if (face.normal.y === 1)  name = materials[2] || '';
+      // else if (face.normal.y === -1) name = materials[3] || '';
+      // else if (face.normal.x === -1) name = materials[4] || '';
+      // else if (face.normal.x === 1)  name = materials[5] || '';
 
       // if just a simple color
       if (name.primaryColor.slice(0, 1) === '#') {
-        let value = self.noise.perlin3( (vertice.x/15), vertice.y/15, vertice.z/15);
-        let heightValue = self.heightNoise.perlin3( (vertice.x/30), vertice.y/30, vertice.z/30);
-        value = Math.min(Math.max(value, -1), 1);
+        let value = self.noise.perlin3( (baseVertice.x/15), baseVertice.y/15, baseVertice.z/15);
+        let heightValue = Math.abs(self.heightNoise.perlin3( (baseVertice.x/30), baseVertice.y/30, baseVertice.z/30));
+        value = Math.abs(Math.min(Math.max(value, -1), 1));
         heightValue = Math.min(Math.max(heightValue, 0), 0.07);
         let c = lerpColor(name.primaryColor, name.secondaryColor,value);
-
-        c = lerpColor(c, "#ffffff", Math.pow(vertice.y/25,2) + heightValue);
+        c = lerpColor(c, "#ffffff", Math.pow(baseVertice.y/19,2) + heightValue);
         self.setColor(mesh.geometry.faces[faceI], c);
 
         //self.setColor(mesh.geometry.faces[i], name);
@@ -359,8 +367,8 @@ Texture.prototype.tick = function(dt) {
 Texture.prototype.setColor = function(face, color) {
   var rgb = hex2rgb(color);
   face.color.setRGB(rgb[0], rgb[1], rgb[2]);
-  var ld = this._lightDark(color);
-  face.vertexColors = [ld[0], ld[0], ld[0], ld[0]];
+ // var ld = this._lightDark(color);
+ // face.vertexColors = [ld[0], ld[0], ld[0], ld[0]];
   // TODO: AO should be figured better than this
   // if (face.normal.y === 1)       face.vertexColors = [ld[0], ld[0], ld[0], ld[0]];
   // else if (face.normal.y === -1) face.vertexColors = [ld[1], ld[1], ld[1], ld[1]];
@@ -372,7 +380,8 @@ Texture.prototype.setColor = function(face, color) {
 
 Texture.prototype._lightDark = memoize(function(color) {
   var light = new this.THREE.Color(color);
-  var hsl = light.getHSL();
+  var hsl = {};
+  light.getHSL(hsl);
   var dark = light.clone();
   dark.setHSL(hsl.h, hsl.s, hsl.l - 0.1);
   return [light, dark];
