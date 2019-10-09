@@ -234,12 +234,12 @@ Texture.prototype.paint = function(mesh,materials) {
           x:pos.x *1 + baseVertice.x,
           y:pos.y *1 + baseVertice.y,
           z:pos.z *1 + baseVertice.z};
-        let value = self.noise.perlin3( (globalPos.x/30), globalPos.y/30, globalPos.z/30);
-        let heightValue = Math.abs(self.heightNoise.perlin3( (globalPos.x/30), globalPos.y/30, globalPos.z/30));
+        let value = self.noise.perlin3( (globalPos.x/25), globalPos.y/25, globalPos.z/25);
+        let heightValue = Math.abs(self.heightNoise.perlin3( (globalPos.x/25), globalPos.y/25, globalPos.z/25));
         value = Math.abs(Math.min(Math.max(value, -1), 1));
         heightValue = Math.min(Math.max(heightValue, 0), 0);
         let c = lerpColor(name.primaryColor, name.secondaryColor,value);
-        c = lerpColor(c, "#ffffff", Math.pow(globalPos.y/20,2) + heightValue);
+        c = lerpColor(c, "#ffffff", Math.pow(globalPos.y/25,2) + heightValue);
         self.setColor(mesh.geometry.faces[faceI], c);
 
         //self.setColor(mesh.geometry.faces[i], name);
